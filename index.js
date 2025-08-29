@@ -1,10 +1,6 @@
-// index.js
-/**
- * NeuroMIND – WhatsApp Bot con seguimiento y botones
- * Requiere: express, axios, dotenv, openai
- *
- * npm i express axios dotenv openai
- */
+// == index.js ==
+// NeuroMIND – WhatsApp Bot con sondeo humano, memoria corta y recordatorios
+// Requiere: express, axios, dotenv, openai
 
 import 'dotenv/config';
 import express from 'express';
@@ -13,19 +9,17 @@ import OpenAI from 'openai';
 
 // ===== ENV =====
 const PORT = process.env.PORT || 10000;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'neuromind_verify';
-const WA_TOKEN = process.env.WHATSAPP_TOKEN || '';
-const PHONE_ID = process.env.PHONE_NUMBER_ID || '';
+
+const VERIFY_TOKEN   = process.env.VERIFY_TOKEN   || 'neuromind_verify';
+const WA_TOKEN       = process.env.WHATSAPP_TOKEN || '';                // token del usuario de sistema
+const PHONE_ID       = process.env.PHONE_NUMBER_ID || '';               // solo dígitos
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const CALENDLY_URL =
-  process.env.CALENDLY_URL ||
-  'https://calendly.com/erick-damian-ceo-de-neuromind-ia/junta-ceo-de-neuromind';
+const CALENDLY_URL   = process.env.CALENDLY_URL   || 'https://calendly.com/erick-damian-ceo-de-neuromind-ia/junta-ceo-de-neuromind';
 
 if (!WA_TOKEN || !PHONE_ID) {
-  console.warn('⚠️ Falta WHATSAPP_TOKEN o PHONE_NUMBER_ID en .env');
+  console.warn('⚠️ Falta WHATSAPP_TOKEN o PHONE_NUMBER_ID en variables de entorno.');
 }
 
-// ===== OpenAI =====
 let openai = null;
 if (OPENAI_API_KEY) {
   openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -33,322 +27,235 @@ if (OPENAI_API_KEY) {
   console.warn('⚠️ Falta OPENAI_API_KEY, se usará respuesta básica.');
 }
 
-// ===== Config =====
+// ===== Config WhatsApp =====
 const GRAPH_URL = `https://graph.facebook.com/v20.0/${PHONE_ID}/messages`;
 
+// ===== Ejemplos =====
 const EXAMPLES = [
-  'ANX → https://anx.mx',
-  'Radical Transforma → https://radicaltransforma.com',
-  'Air Plus TX → https://airplustx.com',
-  'APS Display → https://apsdisplay.com',
-  'Fumigaciones CDMX → https://fumigacionescdmxyareametropolitana.com',
+  'anx.mx',
+  'radicaltransforma.com',
+  'airplustx.com',
+  'apsdisplay.com',
+  'fumigacionescdmxyareametropolitana.com'
 ];
 
-const FOLLOWUP_15M = `👋 Hola, veo que aún no has agendado tu llamada. ¿Quieres que te envíe más *ejemplos de páginas web* o prefieres que te comparta *cómo funciona el proceso*?`;
-const FOLLOWUP_24H = `Recordatorio rápido: esta semana tu página web profesional está desde *$4,500 MXN*. ¿Quieres que te mande más info o te comparto el enlace para agendar?`;
-const FOLLOWUP_48H = `Último recordatorio 🤝 Aún puedes aprovechar la promoción en páginas web. ¿Te mando el enlace para agendar o prefieres que te envíe ejemplos?`;
+// ===== Mensajes de seguimiento (texto plano, sin botones) =====
+const FOLLOWUP_15M =
+  '👋 Quedo atento. Si te sirve, te mando ejemplos o te explico el proceso en 2 min y listo. ¿Por dónde te gustaría empezar?';
 
-// Botones sugeridos
-const MAIN_BUTTONS = [
-  { id: 'agendar',  title: '📅 Agendar' },
-  { id: 'ejemplos', title: '🌐 Ver ejemplos' },
-  { id: 'precios',  title: '💸 Precios' },
-  { id: 'paquetes', title: '💻 Paquetes (Agencias)' },
-];
+const FOLLOWUP_24H =
+  'Solo para no perder tu mensaje: esta semana la web queda desde $4,500 (o $5,999 con hosting+dominio). ¿Te mando ejemplos o prefieres ver precios/paquetes?';
 
-// ===== Prompt Maestro =====
+const FOLLOWUP_48H =
+  `Cierro por aquí para no molestarte. Si quieres retomar, te dejo mi agenda: ${CALENDLY_URL}. Con gusto lo vemos cuando te acomode 🙌`;
+
+// ===== PROMPT MAESTRO (Erick Damián) =====
 const SYSTEM_PROMPT = `
-Eres Erick Damián, CEO de *NeuroMIND*. Hablas SIEMPRE en primera persona como Erick.
-Voz: profesional, segura, cercana y consultiva. Mensajes cortos (2–4 líneas), máximo 1–2 emojis (🙌🚀✨✅👉😊).
-Sin tecnicismos ni mención de IA/APIs. Si preguntan "¿eres bot?", responde: "No, soy Erick. Te ayudo por aquí 😊".
+Hablas en primera persona como **Erick Damián, CEO de NeuroMIND**.
+Tono: cercano, consultivo, profesional y cálido (WhatsApp real). Nunca digas que eres bot o IA.
+Mensajes de 1–3 líneas y máximo 1–2 emojis.
+Una sola pregunta por mensaje y espera respuesta antes de continuar.
+Evita tecnicismos; explica simple. Usa micro-resúmenes: "Súper: web informativa, ya tienes hosting y buscas más clientes. ¿Voy bien?".
 
 OBJETIVO
-• Atender como humano, resolver dudas rápido y llevar a una mini llamada de 10–15 min.
-• Primero pregunto si prefiere mañana o tarde; luego sugiero 1–2 horas o comparto este link: ${CALENDLY_URL}.
-• Infiero lo técnico por contexto; solo pregunto si hace falta y con una frase suave.
-• Siempre cierro con una acción (agendar, ver ejemplos, precios o paquetes).
+1) Entender el caso (sondeo) y despejar dudas.
+2) Si hay fit, proponer una mini-llamada de 10–15 min. Ofrece mañana o tarde; si prefiere link: ${CALENDLY_URL}.
+3) Si el lead pide demasiados datos técnicos o una cotización formal, propone llamada (ahorra ida y vuelta).
 
-SONDEO LIBRE (una pregunta por mensaje)
-• "¿Es tu primera página web o ya has tenido una? 🙌"
-• "Cuéntame rápido, ¿de qué trata tu negocio?"
-• "¿Qué buscas ahora: web informativa, tienda online o landing para captar clientes? 🚀"
-• "¿Quieres que me encargue también de la parte técnica o prefieres que optimice lo que ya tienes?"
+QUÉ AVERIGUAR (pregunta solo si aplica por lo que el lead diga)
+- Giro/negocio y objetivo (atraer clientes, profesionalizar, e-commerce, etc.).
+- Si ya tiene web / dominio / hosting.
+- Tipo: informativa, landing de captación o tienda.
+- Contenidos disponibles: logo, 3–5 fotos, textos base.
+- Urgencia/ventana de entrega.
+- Si es agencia: volumen y si busca proveedor invisible.
 
-RESPUESTAS RÁPIDAS (FAQ)
-• ⏱️ Con contenidos listos, la web queda aprox. en 5–7 días.
-• 🔍 Incluye SEO base y carga rápida.
-• 🎯 Landing enfocada a conversiones con WhatsApp/formulario.
-• 🛒 Si es tienda: pasarela, catálogo e inventarios los definimos en la mini llamada.
-• 🖼️ Con 3–5 fotos y tu logo arrancamos; yo te apoyo con textos base.
+DETECCIÓN DE INTENCIÓN
+- Agencia → proveedor invisible, $4,500 por web, paquetes y ahorros.
+- Pyme/General → $5,999 con hosting+dominio o $4,500 si ya los tiene.
 
-CAMPAÑAS ACTUALES
-1) Agencias de Marketing
-   • Precio por web: *$4,500 MXN*.
-   • Paquetes:
-     – Starter (2 webs/mes): $8,500 MXN (ahorro $500).
-     – Growth (5 webs/mes): $20,000 MXN (ahorro $2,500).
-     – Partner (10 webs/mes): $38,000 MXN (ahorro $7,000).
-   • Beneficios: entrego en 5 días hábiles, diseño premium y servicio “invisible” (la agencia se lleva el crédito), pueden revender desde $12,000 MXN.
-   • Respuesta:
-     "Soy tu proveedor invisible de páginas web: tú las revendes desde $12,000 MXN o más y yo las desarrollo desde $4,500. También manejo paquetes con descuento por volumen. ¿Quieres que te muestre ejemplos?"
+OFERTA (menciónala cuando haga sentido, no todo de golpe)
+- Precios: $4,500 MXN si ya tiene hosting+dominio; $5,999 MXN con hosting+dominio+SSL.
+- Entrega 5–7 días hábiles (con contenidos listos).
+- Incluye: diseño premium responsivo, SEO básico, carga rápida.
+- Landing enfocada a conversiones (WhatsApp/formulario).
+- Tienda: pasarela, catálogo e inventario se ven en la mini-llamada.
+- Arranque: con logo + 3–5 fotos + textos base (apoyo con copy).
 
-2) PYMES
-   • Promoción: *$5,999 MXN* con dominio + hosting + SSL incluidos.
-   • Si ya tienen dominio y hosting: *$4,500 MXN*.
-   • Incluye: diseño premium responsivo, SEO base y 5 días hábiles.
-   • Respuesta:
-     "Tengo una promoción para PYMES: tu web profesional cuesta $5,999 MXN con hosting y dominio. Si ya cuentas con ellos, te queda en $4,500 MXN. ¿Agendamos una llamada para platicar y avanzar?"
+EJEMPLOS (menciona 2–3 si el lead lo pide o ayuda):
+${EXAMPLES.join(', ')}
 
-3) Público General
-   • Web profesional desde *$4,500 MXN* (si ya tienen hosting/dominio) o *$5,999 MXN* con todo incluido.
-   • Incluye: diseño premium, responsive y 5 días hábiles.
-   • Respuesta:
-     "Estoy manejando una promoción: tu web desde $4,500 MXN si ya tienes hosting y dominio, o $5,999 MXN con todo incluido. ¿Quieres que te comparta ejemplos para que veas la calidad?"
+FAqs (breve + pregunta de avance)
+- ¿Tiempo? 5–7 días hábiles con contenidos listos. ¿Para cuándo te gustaría tenerla?
+- ¿Incluye SEO? Sí, SEO básico y carga rápida. Si quieres algo avanzado, lo vemos en la llamada.
+- ¿Pagos? Podemos dividir. Lo vemos en la llamada.
+- ¿Garantía/Cambios? Ajustes razonables y pruebas antes de publicar.
+- ¿Factura? Sí, sin problema.
+- ¿Tienda? Se define pasarela, catálogo e inventario en 10–15 min.
 
-EJEMPLOS REALES (menciona 1–3 según el caso)
-${EXAMPLES.map(e => `• ${e}`).join('\n')}
+CIERRE SUAVE (cuando haya fit o dudas largas)
+"Perfecto. Para no darte lata con mensajes, te propongo una mini-llamada de 10–15 min y te explico todo paso a paso. ¿Te acomoda mañana o tarde? Si prefieres, agenda aquí: ${CALENDLY_URL}"
 
-SEGUIMIENTO AUTOMÁTICO
-• Tras 15–30 min: ofrece botones “Agendar”, “Ver ejemplos”, “Precios”, “Paquetes para agencias”.
-• Tras 24 h: recuerda la promo y ofrece agendar o más info.
-• Tras 48 h: último recordatorio amable con CTA claro.
+RECORDATORIOS QUE HARÁ EL SISTEMA (no los mandes tú a menos que el motor te pida redactarlos):
+- 20–30 min sin respuesta: "Quedo atento… ¿ejemplos o proceso?"
+- 24 h: mención precio desde $4,500.
+- 48 h: despedida + agenda.
 
-BOTONES (si aplica)
-• 📅 Agendar → ${CALENDLY_URL}
-• 🌐 Ver ejemplos → enviar 2–3 del listado
-• 💸 Precios → explicar $4,500 / $5,999 y paquetes
-• 💻 Paquetes (Agencias) → Starter/Growth/Partner y ahorros
-
-CIERRES / CTA
-• “Súper. ¿Te acomoda más en la *mañana* o en la *tarde*? 👉 Si prefieres, agenda directo aquí: ${CALENDLY_URL}”
-• Micro-resumen antes de cerrar: “Súper: *landing para leads* y yo me encargo de lo técnico. ¿Voy bien?”
-• Una sola pregunta a la vez y terminar siempre con una que avance.
+Firma implícita: Erick Damián – CEO de NeuroMIND.
 `;
 
-// ===== Memoria por usuario =====
-const memory = new Map();
-/**
- * getUserState(waId) -> { history:[], timers:{}, lastSeen:number }
- */
-function getUserState(waId) {
-  if (!memory.has(waId)) {
-    memory.set(waId, { history: [], timers: {}, lastSeen: Date.now() });
+// ===== Memoria por usuario (historial + timers) =====
+const memory = new Map(); // key: waid => { history:[], lastSeen: Date, timers:{} }
+
+function getUserState(waid) {
+  if (!memory.has(waid)) {
+    memory.set(waid, { history: [], lastSeen: Date.now(), timers: {} });
   }
-  return memory.get(waId);
+  return memory.get(waid);
 }
 
 // ===== Utilidades WhatsApp =====
 async function sendText(to, body) {
-  try {
-    await axios.post(
-      GRAPH_URL,
-      {
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body },
-      },
-      { headers: { Authorization: `Bearer ${WA_TOKEN}` } }
-    );
-  } catch (err) {
-    console.error('sendText error:', err?.response?.data || err.message);
+  // Partir mensajes largos por seguridad (~1000 chars)
+  const chunks = [];
+  const maxLen = 950;
+  for (let i = 0; i < body.length; i += maxLen) {
+    chunks.push(body.slice(i, i + maxLen));
+  }
+  for (const part of chunks) {
+    try {
+      await axios.post(
+        GRAPH_URL,
+        { messaging_product: 'whatsapp', to, type: 'text', text: { body: part } },
+        { headers: { Authorization: `Bearer ${WA_TOKEN}` } }
+      );
+    } catch (err) {
+      console.error('sendText error:', err?.response?.data || err.message);
+    }
   }
 }
 
-async function sendButtons(to, text, buttons = MAIN_BUTTONS) {
-  // Interactivos tipo botones "reply"
-  const btns = buttons.slice(0, 3).map((b) => ({
-    type: 'reply',
-    reply: { id: b.id, title: b.title },
-  }));
-  try {
-    await axios.post(
-      GRAPH_URL,
-      {
-        messaging_product: 'whatsapp',
-        to,
-        type: 'interactive',
-        interactive: {
-          type: 'button',
-          body: { text },
-          action: { buttons: btns },
-        },
-      },
-      { headers: { Authorization: `Bearer ${WA_TOKEN}` } }
-    );
-  } catch (err) {
-    console.error('sendButtons error:', err?.response?.data || err.message);
-  }
-}
-
-// ===== Seguimientos =====
-function scheduleFollowups(waId, to) {
-  const state = getUserState(waId);
+// ===== Seguimientos programados (si la instancia se mantiene activa) =====
+function scheduleFollowups(waid, to) {
+  const state = getUserState(waid);
 
   // Limpia timers previos
-  for (const key of Object.keys(state.timers)) {
-    clearTimeout(state.timers[key]);
-  }
+  Object.values(state.timers).forEach((t) => clearTimeout(t));
   state.timers = {};
 
-  // 15–30 min (usamos 20 min)
-  state.timers.t15 = setTimeout(async () => {
-    await sendButtons(to, FOLLOWUP_15M, MAIN_BUTTONS);
+  // 20–30 min (usamos 20 min)
+  state.timers.t20 = setTimeout(async () => {
+    await sendText(to, FOLLOWUP_15M);
   }, 20 * 60 * 1000);
 
-  // 24h / 48h (nota: en hosting free pueden no ejecutarse si duerme)
+  // 24 h
   state.timers.t24 = setTimeout(async () => {
     await sendText(to, FOLLOWUP_24H);
   }, 24 * 60 * 60 * 1000);
 
+  // 48 h
   state.timers.t48 = setTimeout(async () => {
     await sendText(to, FOLLOWUP_48H);
   }, 48 * 60 * 60 * 1000);
 }
 
 // ===== LLM =====
-async function llmReply(waId, userText) {
-  const state = getUserState(waId);
-  state.history.push({ role: 'user', content: userText });
+async function llmReply(waid, userText) {
+  const state = getUserState(waid);
+  state.lastSeen = Date.now();
+
   // Mantener historial corto
+  state.history.push({ role: 'user', content: userText });
   if (state.history.length > 12) state.history.splice(0, state.history.length - 12);
 
+  // Sin clave: fallback humano básico
   if (!openai) {
-    // Fallback sin OpenAI
-    return `¡Hola! Soy Erick Damián, CEO de NeuroMIND 🙌\nCuéntame rápido qué necesitas (web informativa, tienda o landing) y te ayudo a agendar una mini llamada: ${CALENDLY_URL}`;
+    return `¡Hola! Soy Erick Damián, CEO de NeuroMIND 🙌
+Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo a avanzar. Si prefieres agendar directo: ${CALENDLY_URL}`;
   }
 
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...state.history,
-  ];
-
   try {
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...state.history
+    ];
     const resp = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages,
-      temperature: 0.6,
+      temperature: 0.6
     });
     const text =
       resp.choices?.[0]?.message?.content?.trim() ||
-      `Perfecto. ¿Te acomoda más mañana o tarde? 👉 Agenda aquí: ${CALENDLY_URL}`;
+      `Perfecto. ¿Te acomoda más mañana o tarde? Si prefieres, agenda aquí: ${CALENDLY_URL}`;
+
     // Guardar salida del asistente
     state.history.push({ role: 'assistant', content: text });
     return text;
   } catch (err) {
     console.error('OpenAI error:', err?.response?.data || err.message);
-    return `Listo. ¿Te acomoda más mañana o en la tarde? 👉 Agenda aquí: ${CALENDLY_URL}`;
+    return `Listo. ¿Te acomoda mañana o en la tarde? 👉 Agenda aquí: ${CALENDLY_URL}`;
   }
 }
 
-// ===== Server =====
+// ===== Servidor =====
 const app = express();
 app.use(express.json());
 
-// Salud
 app.get('/', (_req, res) => {
   res.send('Neuromind bot OK');
 });
 
-// Verificación webhook
+// Meta Webhook Verify (GET)
 app.get('/webhook', (req, res) => {
-  try {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      return res.status(200).send(challenge);
-    }
-    return res.sendStatus(403);
-  } catch {
-    return res.sendStatus(500);
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token && mode === 'subscribe' && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
   }
+  res.sendStatus(403);
 });
 
-// Recepción de eventos
+// Meta Webhook Receiver (POST)
 app.post('/webhook', async (req, res) => {
-  // Responder lo antes posible a Meta
-  res.sendStatus(200);
-
   try {
-    const entry = req.body?.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
+    const body = req.body;
+    const change = body?.entry?.[0]?.changes?.[0]?.value;
+    const messages = change?.messages;
 
-    // Mensajes entrantes
-    const messages = value?.messages;
-    const statuses = value?.statuses;
+    // Ignora notificaciones de status
+    if (!messages) return res.sendStatus(200);
 
-    if (Array.isArray(messages)) {
-      for (const msg of messages) {
-        const from = msg.from; // waId
-        const type = msg.type;
+    const msg = messages[0];
+    const from = msg?.from; // waid
+    const txt = msg?.text?.body?.trim();
 
-        // Limpia o reprograma seguimientos al recibir mensaje
-        scheduleFollowups(from, from);
+    if (!from) return res.sendStatus(200);
 
-        // Extraer texto (texto normal o reply a botón)
-        let userText = '';
-        if (type === 'text') userText = msg.text?.body || '';
-        if (type === 'interactive') {
-          const interactive = msg.interactive;
-          if (interactive?.type === 'button_reply') {
-            userText = interactive.button_reply?.id || interactive.button_reply?.title || '';
-          } else if (interactive?.type === 'list_reply') {
-            userText = interactive.list_reply?.id || interactive.list_reply?.title || '';
-          }
-        }
-        if (!userText) userText = '[mensaje_no_soportado]';
-
-        // Ruteo por botones
-        const lower = userText.toLowerCase();
-        if (['agendar', 'agenda', 'cita', 'calendario'].some(k => lower.includes(k))) {
-          await sendText(from, `Perfecto 🙌 ¿Te acomoda más *mañana* o *tarde*? Si prefieres, puedes agendar directo aquí: ${CALENDLY_URL}`);
-          continue;
-        }
-        if (lower.includes('ejemplos')) {
-          const list = EXAMPLES.slice(0, 3).join('\n');
-          await sendText(from, `Aquí tienes algunos ejemplos de webs entregadas:\n${list}\n\n¿Quieres que agendemos una mini llamada? 👉 ${CALENDLY_URL}`);
-          continue;
-        }
-        if (lower.includes('precios')) {
-          await sendText(
-            from,
-            `Precios rápidos:\n• $4,500 MXN si ya tienes hosting/dominio.\n• $5,999 MXN con hosting + dominio + SSL incluidos.\n• Agencias: desde $4,500 por web.\n\n¿Te acomoda mañana o tarde para una mini llamada? 👉 ${CALENDLY_URL}`
-          );
-          continue;
-        }
-        if (lower.includes('paquetes')) {
-          await sendText(
-            from,
-            `Paquetes para Agencias:\n• Starter (2 webs): $8,500 MXN (ahorro $500)\n• Growth (5 webs): $20,000 MXN (ahorro $2,500)\n• Partner (10 webs): $38,000 MXN (ahorro $7,000)\n\n¿Te muestro ejemplos o agendamos directo? 👉 ${CALENDLY_URL}`
-          );
-          continue;
-        }
-
-        // LLM
-        const reply = await llmReply(from, userText);
-        // Si el modelo no incluye CTA, añadimos botones
-        await sendText(from, reply);
-
-        // Si el mensaje fue corto y de saludo / inicio, ofrece botones
-        if (/hola|buenas|qué tal|buen dia|buen día|saludo/i.test(userText)) {
-          await sendButtons(from, '¿Qué te gustaría hacer ahora?', MAIN_BUTTONS);
-        }
-      }
+    // Solo procesamos texto. Si viene audio/imágenes, pedimos texto.
+    if (!txt) {
+      await sendText(
+        from,
+        '¿Podrías escribirme en texto lo que necesitas? Así te ayudo más rápido 🙌'
+      );
+      return res.sendStatus(200);
     }
 
-    // Estados de mensajes (entregados, leídos, etc.)
-    if (Array.isArray(statuses)) {
-      // Puedes loguear o reaccionar a "failed" para reintentos.
-      // console.log(JSON.stringify(statuses, null, 2));
-    }
+    // Genera respuesta con LLM
+    const reply = await llmReply(from, txt);
+    await sendText(from, reply);
+
+    // Reprograma followups cada vez que hay interacción
+    scheduleFollowups(from, from);
+
+    res.sendStatus(200);
   } catch (err) {
     console.error('Webhook error:', err?.response?.data || err.message);
+    res.sendStatus(200);
   }
 });
 
-// Iniciar
 app.listen(PORT, () => {
   console.log(`🤖 Bot en puerto ${PORT}`);
 });
