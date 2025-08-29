@@ -1,6 +1,5 @@
 // == index.js ==
-// NeuroMIND – WhatsApp Bot con sondeo humano, memoria corta y recordatorios
-// Requiere: express, axios, dotenv, openai
+// NeuroMIND – Bot WhatsApp + Mini-Inbox + Pausa automática al responder manualmente
 
 import 'dotenv/config';
 import express from 'express';
@@ -11,10 +10,15 @@ import OpenAI from 'openai';
 const PORT = process.env.PORT || 10000;
 
 const VERIFY_TOKEN   = process.env.VERIFY_TOKEN   || 'neuromind_verify';
-const WA_TOKEN       = process.env.WHATSAPP_TOKEN || '';                // token del usuario de sistema
-const PHONE_ID       = process.env.PHONE_NUMBER_ID || '';               // solo dígitos
+const WA_TOKEN       = process.env.WHATSAPP_TOKEN || '';
+const PHONE_ID       = process.env.PHONE_NUMBER_ID || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const CALENDLY_URL   = process.env.CALENDLY_URL   || 'https://calendly.com/erick-damian-ceo-de-neuromind-ia/junta-ceo-de-neuromind';
+
+// Control operador (mini-inbox)
+const BOT_MODE = process.env.BOT_MODE || 'auto'; // 'auto' | 'manual' | 'off'
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const TAKEOVER_MIN = parseInt(process.env.TAKEOVER_MINUTES || '90', 10);
 
 if (!WA_TOKEN || !PHONE_ID) {
   console.warn('⚠️ Falta WHATSAPP_TOKEN o PHONE_NUMBER_ID en variables de entorno.');
@@ -39,13 +43,11 @@ const EXAMPLES = [
   'fumigacionescdmxyareametropolitana.com'
 ];
 
-// ===== Mensajes de seguimiento (texto plano, sin botones) =====
+// ===== Seguimientos =====
 const FOLLOWUP_15M =
   '👋 Quedo atento. Si te sirve, te mando ejemplos o te explico el proceso en 2 min y listo. ¿Por dónde te gustaría empezar?';
-
 const FOLLOWUP_24H =
   'Solo para no perder tu mensaje: esta semana la web queda desde $4,500 (o $5,999 con hosting+dominio). ¿Te mando ejemplos o prefieres ver precios/paquetes?';
-
 const FOLLOWUP_48H =
   `Cierro por aquí para no molestarte. Si quieres retomar, te dejo mi agenda: ${CALENDLY_URL}. Con gusto lo vemos cuando te acomode 🙌`;
 
@@ -105,7 +107,7 @@ Firma implícita: Erick Damián – CEO de NeuroMIND.
 `;
 
 // ===== Memoria por usuario (historial + timers) =====
-const memory = new Map(); // key: waid => { history:[], lastSeen: Date, timers:{} }
+const memory = new Map(); // waid => { history:[], lastSeen:number, timers:{} }
 
 function getUserState(waid) {
   if (!memory.has(waid)) {
@@ -114,19 +116,30 @@ function getUserState(waid) {
   return memory.get(waid);
 }
 
+// ===== Mini-Inbox (memoria simple) =====
+const manualSet = new Set();             // waid con pausa activa (no responde el bot)
+const chats = new Map();                 // waid -> { name, messages: [{dir:'in'|'out', text, ts}] }
+const releaseTimers = new Map();         // waid -> timeout para auto-reanudar
+
+function pushMsg(waid, dir, text) {
+  if (!chats.has(waid)) chats.set(waid, { name: waid, messages: [] });
+  chats.get(waid).messages.push({ dir, text, ts: Date.now() });
+  const arr = chats.get(waid).messages;
+  if (arr.length > 200) arr.shift();
+}
+
 // ===== Utilidades WhatsApp =====
 async function sendText(to, body) {
-  // Partir mensajes largos por seguridad (~1000 chars)
-  const chunks = [];
+  // Partir mensajes largos por seguridad
+  const parts = [];
   const maxLen = 950;
-  for (let i = 0; i < body.length; i += maxLen) {
-    chunks.push(body.slice(i, i + maxLen));
-  }
-  for (const part of chunks) {
+  for (let i = 0; i < body.length; i += maxLen) parts.push(body.slice(i, i + maxLen));
+
+  for (const text of parts) {
     try {
       await axios.post(
         GRAPH_URL,
-        { messaging_product: 'whatsapp', to, type: 'text', text: { body: part } },
+        { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
         { headers: { Authorization: `Bearer ${WA_TOKEN}` } }
       );
     } catch (err) {
@@ -135,7 +148,7 @@ async function sendText(to, body) {
   }
 }
 
-// ===== Seguimientos programados (si la instancia se mantiene activa) =====
+// ===== Seguimientos programados =====
 function scheduleFollowups(waid, to) {
   const state = getUserState(waid);
 
@@ -143,7 +156,7 @@ function scheduleFollowups(waid, to) {
   Object.values(state.timers).forEach((t) => clearTimeout(t));
   state.timers = {};
 
-  // 20–30 min (usamos 20 min)
+  // 20 min
   state.timers.t20 = setTimeout(async () => {
     await sendText(to, FOLLOWUP_15M);
   }, 20 * 60 * 1000);
@@ -164,21 +177,16 @@ async function llmReply(waid, userText) {
   const state = getUserState(waid);
   state.lastSeen = Date.now();
 
-  // Mantener historial corto
   state.history.push({ role: 'user', content: userText });
   if (state.history.length > 12) state.history.splice(0, state.history.length - 12);
 
-  // Sin clave: fallback humano básico
   if (!openai) {
     return `¡Hola! Soy Erick Damián, CEO de NeuroMIND 🙌
 Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo a avanzar. Si prefieres agendar directo: ${CALENDLY_URL}`;
   }
 
   try {
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...state.history
-    ];
+    const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...state.history];
     const resp = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages,
@@ -188,7 +196,7 @@ Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo 
       resp.choices?.[0]?.message?.content?.trim() ||
       `Perfecto. ¿Te acomoda más mañana o tarde? Si prefieres, agenda aquí: ${CALENDLY_URL}`;
 
-    // Guardar salida del asistente
+    // Guarda salida del asistente
     state.history.push({ role: 'assistant', content: text });
     return text;
   } catch (err) {
@@ -197,15 +205,16 @@ Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo 
   }
 }
 
-// ===== Servidor =====
+// ===== Server =====
 const app = express();
 app.use(express.json());
 
+// Salud
 app.get('/', (_req, res) => {
   res.send('Neuromind bot OK');
 });
 
-// Meta Webhook Verify (GET)
+// Verificación webhook
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -217,36 +226,53 @@ app.get('/webhook', (req, res) => {
   res.sendStatus(403);
 });
 
-// Meta Webhook Receiver (POST)
+// Recepción de eventos
 app.post('/webhook', async (req, res) => {
   try {
-    const body = req.body;
-    const change = body?.entry?.[0]?.changes?.[0]?.value;
+    const change = req.body?.entry?.[0]?.changes?.[0]?.value;
     const messages = change?.messages;
-
-    // Ignora notificaciones de status
     if (!messages) return res.sendStatus(200);
 
     const msg = messages[0];
-    const from = msg?.from; // waid
+    const from = msg?.from;
     const txt = msg?.text?.body?.trim();
 
     if (!from) return res.sendStatus(200);
 
-    // Solo procesamos texto. Si viene audio/imágenes, pedimos texto.
-    if (!txt) {
-      await sendText(
+    // Guarda entrada para el panel
+    pushMsg(from, 'in', txt || '[no-text]');
+
+    // BOT apagado: no responder
+    if (BOT_MODE === 'off') return res.sendStatus(200);
+
+    // MODO manual + pausa activa: no responder (y reprogramar auto-reanudar)
+    if (BOT_MODE === 'manual' && manualSet.has(from)) {
+      if (releaseTimers.has(from)) clearTimeout(releaseTimers.get(from));
+      releaseTimers.set(
         from,
-        '¿Podrías escribirme en texto lo que necesitas? Así te ayudo más rápido 🙌'
+        setTimeout(async () => {
+          manualSet.delete(from);
+          await sendText(from, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+          scheduleFollowups(from, from);
+          releaseTimers.delete(from);
+        }, TAKEOVER_MIN * 60 * 1000)
       );
       return res.sendStatus(200);
     }
 
-    // Genera respuesta con LLM
+    // Si no hay texto, pide texto
+    if (!txt) {
+      await sendText(from, '¿Podrías escribirme en texto lo que necesitas? Así te ayudo más rápido 🙌');
+      pushMsg(from, 'out', '¿Podrías escribirme en texto lo que necesitas? Así te ayudo más rápido 🙌');
+      return res.sendStatus(200);
+    }
+
+    // Respuesta LLM
     const reply = await llmReply(from, txt);
     await sendText(from, reply);
+    pushMsg(from, 'out', reply);
 
-    // Reprograma followups cada vez que hay interacción
+    // Programar seguimientos
     scheduleFollowups(from, from);
 
     res.sendStatus(200);
@@ -254,6 +280,218 @@ app.post('/webhook', async (req, res) => {
     console.error('Webhook error:', err?.response?.data || err.message);
     res.sendStatus(200);
   }
+});
+
+// ====== Helpers de admin ======
+function assertAdmin(req, res) {
+  const token = req.headers['x-admin-token'] || req.query.token || req.body?.token;
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+// Lista de chats
+app.get('/api/chats', (req, res) => {
+  if (!assertAdmin(req, res)) return;
+  const list = [...chats.entries()].map(([waid, c]) => {
+    const last = c.messages[c.messages.length - 1];
+    return {
+      waid,
+      lastMsg: last?.text || '',
+      lastDir: last?.dir || 'in',
+      lastAt: last?.ts || 0,
+      paused: manualSet.has(waid)
+    };
+  }).sort((a,b) => b.lastAt - a.lastAt);
+  res.json({ ok:true, data:list });
+});
+
+// Mensajes de un chat
+app.get('/api/messages', (req, res) => {
+  if (!assertAdmin(req, res)) return;
+  const waid = String(req.query.waid || '');
+  const c = chats.get(waid) || { messages: [] };
+  res.json({ ok:true, data:c.messages });
+});
+
+// Enviar mensaje manual y PAUSAR al bot automáticamente
+app.post('/api/send', async (req, res) => {
+  if (!assertAdmin(req, res)) return;
+  const { to, text } = req.body || {};
+  if (!to || !text) return res.status(400).json({ ok:false, error:'to and text required' });
+
+  try {
+    await sendText(to, text);
+    pushMsg(to, 'out', text);
+
+    // Activa pausa
+    manualSet.add(to);
+    if (releaseTimers.has(to)) clearTimeout(releaseTimers.get(to));
+    releaseTimers.set(
+      to,
+      setTimeout(async () => {
+        manualSet.delete(to);
+        await sendText(to, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+        scheduleFollowups(to, to);
+        releaseTimers.delete(to);
+      }, TAKEOVER_MIN * 60 * 1000)
+    );
+
+    res.json({ ok:true });
+  } catch (e) {
+    console.error('manual send error:', e?.response?.data || e.message);
+    res.status(500).json({ ok:false });
+  }
+});
+
+// Pausar/Reanudar manualmente
+app.post('/api/takeover', (req, res) => {
+  if (!assertAdmin(req, res)) return;
+  const { waid, minutes = TAKEOVER_MIN } = req.body || {};
+  if (!waid) return res.status(400).json({ ok:false, error:'waid required' });
+
+  manualSet.add(waid);
+  if (releaseTimers.has(waid)) clearTimeout(releaseTimers.get(waid));
+  releaseTimers.set(
+    waid,
+    setTimeout(async () => {
+      manualSet.delete(waid);
+      await sendText(waid, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+      scheduleFollowups(waid, waid);
+      releaseTimers.delete(waid);
+    }, parseInt(minutes,10) * 60 * 1000)
+  );
+
+  res.json({ ok:true, waid, minutes });
+});
+
+app.post('/api/release', (req, res) => {
+  if (!assertAdmin(req, res)) return;
+  const { waid } = req.body || {};
+  if (!waid) return res.status(400).json({ ok:false, error:'waid required' });
+  manualSet.delete(String(waid));
+  if (releaseTimers.has(waid)) clearTimeout(releaseTimers.get(waid));
+  releaseTimers.delete(waid);
+  res.json({ ok:true });
+});
+
+// ===== Panel web muy simple =====
+app.get('/inbox', (req, res) => {
+  res.setHeader('Content-Type','text/html; charset=utf-8');
+  res.end(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Neuromind Inbox</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;display:flex;height:100vh}
+  #side{width:320px;border-right:1px solid #eee;overflow:auto}
+  #main{flex:1;display:flex;flex-direction:column}
+  header{padding:10px 12px;border-bottom:1px solid #eee;display:flex;gap:8px;align-items:center}
+  input,button{font:inherit}
+  .chat{padding:10px 12px;border-bottom:1px solid #f2f2f2;cursor:pointer}
+  .chat.paused{background:#fff7e6}
+  .msglist{flex:1;overflow:auto;padding:12px;background:#fafafa}
+  .bubble{max-width:70%;margin:6px 0;padding:8px 10px;border-radius:10px;white-space:pre-wrap}
+  .in{background:#fff;border:1px solid #eee;align-self:flex-start}
+  .out{background:#dff4ff;border:1px solid #bfe8ff;align-self:flex-end}
+  .controls{display:flex;gap:8px;padding:10px;border-top:1px solid #eee}
+  .controls input[type=text]{flex:1;padding:8px}
+</style>
+</head>
+<body>
+  <div id="side">
+    <header>
+      <input id="token" placeholder="ADMIN_TOKEN" />
+      <button onclick="saveToken()">OK</button>
+    </header>
+    <div id="chats"></div>
+  </div>
+  <div id="main">
+    <header>
+      <div id="title">Selecciona un chat</div>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button onclick="takeover()">Pausar</button>
+        <button onclick="release()">Reanudar</button>
+      </div>
+    </header>
+    <div id="msgs" class="msglist"></div>
+    <div class="controls">
+      <input id="to" placeholder="waid (52155...)" />
+      <input id="text" placeholder="Escribe tu mensaje..." />
+      <button onclick="send()">Enviar</button>
+    </div>
+  </div>
+
+<script>
+let TOKEN = localStorage.getItem('admintoken') || '';
+let current = '';
+
+document.getElementById('token').value = TOKEN;
+
+function saveToken(){ TOKEN = document.getElementById('token').value.trim(); localStorage.setItem('admintoken', TOKEN); loadChats(); }
+
+async function loadChats(){
+  if(!TOKEN) return;
+  const r = await fetch('/api/chats?token='+encodeURIComponent(TOKEN));
+  const j = await r.json(); if(!j.ok) return alert('Token inválido');
+  const c = document.getElementById('chats'); c.innerHTML='';
+  j.data.forEach(row=>{
+    const d = document.createElement('div');
+    d.className='chat'+(row.paused?' paused':'');
+    d.textContent = row.waid + ' — ' + (row.lastMsg || '');
+    d.onclick = ()=>{ current=row.waid; document.getElementById('title').textContent=row.waid; document.getElementById('to').value=row.waid; loadMsgs(); };
+    c.appendChild(d);
+  });
+}
+
+async function loadMsgs(){
+  if(!TOKEN || !current) return;
+  const r = await fetch('/api/messages?token='+encodeURIComponent(TOKEN)+'&waid='+encodeURIComponent(current));
+  const j = await r.json(); if(!j.ok) return alert('Token inválido');
+  const m = document.getElementById('msgs'); m.innerHTML='';
+  j.data.forEach(x=>{
+    const b = document.createElement('div');
+    b.className='bubble '+(x.dir==='out'?'out':'in');
+    b.textContent = x.text;
+    m.appendChild(b);
+  });
+  m.scrollTop = m.scrollHeight;
+}
+
+async function send(){
+  const to = document.getElementById('to').value.trim();
+  const text = document.getElementById('text').value.trim();
+  if(!to || !text) return;
+  const r = await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,to,text})});
+  const j = await r.json(); if(!j.ok) return alert('Error al enviar');
+  document.getElementById('text').value='';
+  loadMsgs(); loadChats();
+}
+
+async function takeover(){
+  if(!current) return;
+  const mins = prompt('Minutos de pausa', '90') || '90';
+  const r = await fetch('/api/takeover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,waid:current,minutes:parseInt(mins,10)})});
+  const j = await r.json(); if(!j.ok) return alert('Error');
+  loadChats();
+}
+
+async function release(){
+  if(!current) return;
+  const r = await fetch('/api/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,waid:current})});
+  const j = await r.json(); if(!j.ok) return alert('Error');
+  loadChats();
+}
+
+saveToken();
+setInterval(()=>{ if(current) loadMsgs(); loadChats(); }, 5000);
+</script>
+</body>
+</html>`);
 });
 
 app.listen(PORT, () => {
