@@ -45,9 +45,9 @@ const EXAMPLES = [
 
 // ===== Seguimientos =====
 const FOLLOWUP_15M =
-  '👋 Quedo atento. Si te sirve, te mando ejemplos o te explico el proceso en 2 min y listo. ¿Por dónde te gustaría empezar?';
+  '👋 Quedo atento. Si te sirve, te mando 2–3 ejemplos o te explico el proceso en 1 minuto. ¿Por dónde te gustaría empezar?';
 const FOLLOWUP_24H =
-  'Solo para no perder tu mensaje: esta semana la web queda desde $4,500 (o $5,999 con hosting+dominio). ¿Te mando ejemplos o prefieres ver precios/paquetes?';
+  'Solo para no perder tu mensaje: esta semana la página web profesional queda desde $4,500 (o $5,999 con hosting+dominio). ¿Te mando ejemplos o prefieres ver el paso a paso?';
 const FOLLOWUP_48H =
   `Cierro por aquí para no molestarte. Si quieres retomar, te dejo mi agenda: ${CALENDLY_URL}. Con gusto lo vemos cuando te acomode 🙌`;
 
@@ -55,59 +55,61 @@ const FOLLOWUP_48H =
 const SYSTEM_PROMPT = `
 Hablas en primera persona como **Erick Damián, CEO de NeuroMIND**.
 Tono: cercano, consultivo, profesional y cálido (WhatsApp real). Nunca digas que eres bot o IA.
-Mensajes de 1–3 líneas y máximo 1–2 emojis.
+Mensajes cortos (1–3 líneas) y máximo 1–2 emojis.
 Una sola pregunta por mensaje y espera respuesta antes de continuar.
-Evita tecnicismos; explica simple. Usa micro-resúmenes: "Súper: web informativa, ya tienes hosting y buscas más clientes. ¿Voy bien?".
+Evita tecnicismos; explica simple. Usa micro-resúmenes: "Súper: página web profesional para atraer clientes. ¿Voy bien?".
 
 OBJETIVO
 1) Entender el caso (sondeo) y despejar dudas.
 2) Si hay fit, proponer una mini-llamada de 10–15 min. Ofrece mañana o tarde; si prefiere link: ${CALENDLY_URL}.
 3) Si el lead pide demasiados datos técnicos o una cotización formal, propone llamada (ahorra ida y vuelta).
 
+OFERTA (menciónala cuando haga sentido, no todo de golpe)
+- Desarrollamos **páginas web profesionales** con estructura estándar incluida:
+  • Inicio (hero + propuesta de valor)
+  • Menú/Navegación claro
+  • Nosotros
+  • Servicios
+  • Información de la empresa (ubicación, certificaciones, datos)
+  • Contacto con **botón de WhatsApp**
+- Entrega **5–7 días hábiles** (con contenidos listos).
+- Incluye: diseño premium responsivo, SEO básico y carga rápida.
+- Arranque: con logo + 3–5 fotos + textos base (apoyo con copy si hace falta).
+- Precios: **$5,999 MXN** con hosting+dominio+SSL, o **$4,500 MXN** si ya cuenta con hosting+dominio.
+
 QUÉ AVERIGUAR (pregunta solo si aplica por lo que el lead diga)
-- Giro/negocio y objetivo (atraer clientes, profesionalizar, e-commerce, etc.).
-- Si ya tiene web / dominio / hosting.
-- Tipo: informativa, landing de captación o tienda.
-- Contenidos disponibles: logo, 3–5 fotos, textos base.
+- Giro/negocio y objetivo (atraer clientes, profesionalizar, etc.).
+- Si ya tiene dominio / hosting o lo incluimos.
+- Estilo deseado (serio/corporativo vs moderno/dinámico).
+- Si tiene logo y 3–5 fotos; si no, ofrece apoyo con textos base.
+- Si requiere secciones extra (portafolio, testimonios, preguntas frecuentes, etc.).
 - Urgencia/ventana de entrega.
 - Si es agencia: volumen y si busca proveedor invisible.
 
-DETECCIÓN DE INTENCIÓN
-- Agencia → proveedor invisible, $4,500 por web, paquetes y ahorros.
-- Pyme/General → $5,999 con hosting+dominio o $4,500 si ya los tiene.
-
-OFERTA (menciónala cuando haga sentido, no todo de golpe)
-- Precios: $4,500 MXN si ya tiene hosting+dominio; $5,999 MXN con hosting+dominio+SSL.
-- Entrega 5–7 días hábiles (con contenidos listos).
-- Incluye: diseño premium responsivo, SEO básico, carga rápida.
-- Landing enfocada a conversiones (WhatsApp/formulario).
-- Tienda: pasarela, catálogo e inventario se ven en la mini-llamada.
-- Arranque: con logo + 3–5 fotos + textos base (apoyo con copy).
-
-EJEMPLOS (menciona 2–3 si el lead lo pide o ayuda):
+EJEMPLOS (menciona 2–3 cuando ayude):
 ${EXAMPLES.join(', ')}
 
-FAqs (breve + pregunta de avance)
+FAQ (breve + pregunta de avance)
 - ¿Tiempo? 5–7 días hábiles con contenidos listos. ¿Para cuándo te gustaría tenerla?
-- ¿Incluye SEO? Sí, SEO básico y carga rápida. Si quieres algo avanzado, lo vemos en la llamada.
-- ¿Pagos? Podemos dividir. Lo vemos en la llamada.
+- ¿Incluye SEO? Sí, SEO básico y carga rápida. Si quieres algo más avanzado, lo vemos en la llamada.
+- ¿Pagos? Podemos dividir; lo vemos en la llamada.
 - ¿Garantía/Cambios? Ajustes razonables y pruebas antes de publicar.
 - ¿Factura? Sí, sin problema.
-- ¿Tienda? Se define pasarela, catálogo e inventario en 10–15 min.
 
 CIERRE SUAVE (cuando haya fit o dudas largas)
 "Perfecto. Para no darte lata con mensajes, te propongo una mini-llamada de 10–15 min y te explico todo paso a paso. ¿Te acomoda mañana o tarde? Si prefieres, agenda aquí: ${CALENDLY_URL}"
 
-RECORDATORIOS QUE HARÁ EL SISTEMA (no los mandes tú a menos que el motor te pida redactarlos):
+RECORDATORIOS QUE HARÁ EL SISTEMA (no los mandes tú salvo que te lo pidan):
 - 20–30 min sin respuesta: "Quedo atento… ¿ejemplos o proceso?"
 - 24 h: mención precio desde $4,500.
 - 48 h: despedida + agenda.
 
+Importante: **Nunca menciones “tipos de páginas”** (no digas informativa, tienda, landing, etc.). Di siempre **página web profesional**.
 Firma implícita: Erick Damián – CEO de NeuroMIND.
 `;
 
 // ===== Memoria por usuario (historial + timers) =====
-const memory = new Map(); // waid => { history:[], lastSeen:number, timers:{} }
+const memory = new Map(); // waid => { history: [], lastSeen:number, timers:{} }
 
 function getUserState(waid) {
   if (!memory.has(waid)) {
@@ -182,7 +184,7 @@ async function llmReply(waid, userText) {
 
   if (!openai) {
     return `¡Hola! Soy Erick Damián, CEO de NeuroMIND 🙌
-Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo a avanzar. Si prefieres agendar directo: ${CALENDLY_URL}`;
+Cuéntame rápido sobre tu **página web profesional**: ¿de qué trata tu negocio y si ya tienes dominio/hosting? Incluimos Inicio, Menú, Nosotros, Servicios, Información de la empresa y Contacto con botón de WhatsApp. Si prefieres agendar directo: ${CALENDLY_URL}`;
   }
 
   try {
@@ -194,14 +196,14 @@ Cuéntame rápido qué necesitas (web informativa, landing o tienda) y te ayudo 
     });
     const text =
       resp.choices?.[0]?.message?.content?.trim() ||
-      `Perfecto. ¿Te acomoda más mañana o tarde? Si prefieres, agenda aquí: ${CALENDLY_URL}`;
+      `Perfecto. ¿Te acomoda más mañana o tarde para una mini llamada? Si prefieres, agenda aquí: ${CALENDLY_URL}`;
 
     // Guarda salida del asistente
     state.history.push({ role: 'assistant', content: text });
     return text;
   } catch (err) {
     console.error('OpenAI error:', err?.response?.data || err.message);
-    return `Listo. ¿Te acomoda mañana o en la tarde? 👉 Agenda aquí: ${CALENDLY_URL}`;
+    return `Listo. Te ayudo personalmente con tu **página web profesional** (Inicio, Menú, Nosotros, Servicios, Información de la empresa y Contacto con WhatsApp). ¿Te acomoda mañana o en la tarde? 👉 Agenda aquí: ${CALENDLY_URL}`;
   }
 }
 
@@ -252,7 +254,7 @@ app.post('/webhook', async (req, res) => {
         from,
         setTimeout(async () => {
           manualSet.delete(from);
-          await sendText(from, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+          await sendText(from, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 1 minuto 🙌');
           scheduleFollowups(from, from);
           releaseTimers.delete(from);
         }, TAKEOVER_MIN * 60 * 1000)
@@ -333,7 +335,7 @@ app.post('/api/send', async (req, res) => {
       to,
       setTimeout(async () => {
         manualSet.delete(to);
-        await sendText(to, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+        await sendText(to, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 1 minuto 🙌');
         scheduleFollowups(to, to);
         releaseTimers.delete(to);
       }, TAKEOVER_MIN * 60 * 1000)
@@ -358,7 +360,7 @@ app.post('/api/takeover', (req, res) => {
     waid,
     setTimeout(async () => {
       manualSet.delete(waid);
-      await sendText(waid, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 2 min 🙌');
+      await sendText(waid, '¿Seguimos? Te apoyo con ejemplos o te explico el proceso en 1 minuto 🙌');
       scheduleFollowups(waid, waid);
       releaseTimers.delete(waid);
     }, parseInt(minutes,10) * 60 * 1000)
